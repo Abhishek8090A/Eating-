@@ -26,7 +26,8 @@ def home():
 
 
 def run():
-  app.run(host="0.0.0.0", port=8080)
+  port = int(os.environ.get("PORT", 8080))
+  app.run(host="0.0.0.0", port=port)
 
 
 def keep_alive():
@@ -34,14 +35,14 @@ def keep_alive():
   t.start()
 
 
-# ----------------- बोट के स्टेप्स -----------------
+# ----------------- बोट के स्टेप्स और कमांड्स -----------------
 
 
 @bot.message_handler(commands=["start"])
 def send_welcome(message):
   chat_id = message.chat.id
 
-  # अगर यूजर एडमिन है, तो एडमिन पैनल का बटन दिखाएं
+  # अगर यूजर एडमिन है
   if chat_id == ADMIN_ID:
     markup_admin = types.ReplyKeyboardMarkup(
         resize_keyboard=True, one_time_keyboard=False
@@ -50,13 +51,41 @@ def send_welcome(message):
     bot.send_message(
         chat_id, "नमस्ते एडमिन जी! आपका पैनल नीचे है:", reply_markup=markup_admin
     )
+    return
 
+  # अगर यूजर पहले से अप्रूव्ड है - मुख्य मेनू दिखाएं
+  if chat_id in approved_profiles:
+    markup_menu = types.ReplyKeyboardMarkup(
+        resize_keyboard=True, one_time_keyboard=False
+    )
+    markup_menu.add(
+        types.KeyboardButton("🔍 पार्टनर खोजें"),
+        types.KeyboardButton("👤 मेरी प्रोफाइल"),
+    )
+    bot.send_message(
+        chat_id,
+        "✨ आपका स्वागत है! मुख्य मेनू से विकल्प चुनें:",
+        reply_markup=markup_menu,
+    )
+    return
+
+  # अगर यूजर पेंडिंग लिस्ट में है
+  if chat_id in pending_profiles:
+    bot.send_message(
+        chat_id,
+        "⏳ आपकी प्रोफाइल अभी एडमिन के पास वेरिफिकेशन के लिए पेंडिंग है। कृपया"
+        " प्रतीक्षा करें।",
+    )
+    return
+
+  # नए यूजर के लिए रजिस्ट्रेशन शुरू करें
   markup = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
   btn = types.KeyboardButton("📱 मोबाइल नंबर शेयर करें", request_contact=True)
   markup.add(btn)
   bot.send_message(
       chat_id,
-      "ऑल इंडिया डेटिंग बोट में आपका स्वागत है! सुरक्षित अनुभव के लिए कृपया अपना मोबाइल नंबर साझा करें:",
+      "ऑल इंडिया डेटिंग बोट में आपका स्वागत है! सुरक्षित अनुभव के लिए कृपया अपना मोबाइल"
+      " नंबर साझा करें:",
       reply_markup=markup,
   )
 
@@ -93,7 +122,8 @@ def get_district(message):
 
   bot.send_message(
       chat_id,
-      "अंतिम चरण: कृपया अपनी स्पष्ट **सेल्फ़ी (Selfie)** फोटो भेजें ताकि फर्जी प्रोफाइल रोकी जा सकें।",
+      "अंतिम चरण: कृपया अपनी स्पष्ट **सेल्फ़ी (Selfie)** फोटो भेजें ताकि फर्जी"
+      " प्रोफाइल रोकी जा सकें।",
       parse_mode="Markdown",
   )
   bot.register_next_step_handler(message, get_selfie)
@@ -109,7 +139,8 @@ def get_selfie(message):
 
     bot.send_message(
         chat_id,
-        "🎉 आपकी सेल्फ़ी मिल गई है! एडमिन द्वारा वेरीफाई होने के बाद आपकी प्रोफाइल एक्टिव कर दी जाएगी।",
+        "🎉 आपकी सेल्फ़ी मिल गई है! एडमिन द्वारा वेरीफाई होने के बाद आपकी प्रोफाइल"
+        " एक्टिव कर दी जाएगी।",
     )
 
     # एडमिन को अप्रूवल के लिए भेजना
@@ -124,7 +155,10 @@ def get_selfie(message):
           ),
       )
       admin_text = (
-          f"🔔 **नई प्रोफाइल वेरिफिकेशन के लिए आई है:**\nनाम: {user_data[chat_id]['name']}\nउम्र: {user_data[chat_id]['age']}\nजिला/शहर: {user_data[chat_id]['district']}"
+          f"🔔 **नई प्रोफाइल वेरिफिकेशन के लिए आई है:**\nनाम:"
+          f" {user_data[chat_id]['name']}\nउम्र:"
+          f" {user_data[chat_id]['age']}\nजिला/शहर:"
+          f" {user_data[chat_id]['district']}"
       )
       bot.send_photo(
           ADMIN_ID, photo_id, caption=admin_text, reply_markup=markup
@@ -134,6 +168,34 @@ def get_selfie(message):
         chat_id, "⚠️ कृपया टेक्स्ट नहीं, बल्कि अपनी फोटो (सेल्फ़ी) ही अपलोड करें।"
     )
     bot.register_next_step_handler(message, get_selfie)
+
+
+# ----------------- मेनू बटन हैंडलर्स -----------------
+
+
+@bot.message_handler(func=lambda message: message.text == "🔍 पार्टनर खोजें")
+def find_partner(message):
+  chat_id = message.chat.id
+  if chat_id in approved_profiles:
+    bot.send_message(
+        chat_id,
+        "🔍 आपके आसपास या ऑल इंडिया में मैच ढूंढे जा रहे हैं... कृपया प्रतीक्षा"
+        " करें।",
+    )
+  else:
+    bot.send_message(chat_id, "⚠️ पहले अपनी प्रोफाइल अप्रूव करवाएं।")
+
+
+@bot.message_handler(func=lambda message: message.text == "👤 मेरी प्रोफाइल")
+def my_profile(message):
+  chat_id = message.chat.id
+  if chat_id in approved_profiles:
+    p = approved_profiles[chat_id]
+    profile_text = (
+        f"👤 **आपकी प्रोफाइल विवरण:**\n\nनाम: {p['name']}\nउम्र:"
+        f" {p['age']}\nजिला/शहर: {p['district']}\nमोबाइल: {p['phone']}"
+    )
+    bot.send_photo(chat_id, p["selfie"], caption=profile_text, parse_mode="Markdown")
 
 
 # ----------------- एडमिन पैनल और कॉलबैक हैंडलर -----------------
@@ -166,7 +228,8 @@ def callback_handler(call):
       approved_profiles[target_id] = pending_profiles.pop(target_id)
       bot.send_message(
           target_id,
-          "🎉 बधाई हो! आपकी प्रोफाइल अप्रूव हो गई है। अब आप बोट का उपयोग कर सकते हैं।",
+          "🎉 बधाई हो! आपकी प्रोफाइल अप्रूव हो गई है। अब आप बोट का उपयोग कर सकते"
+          " हैं। मुख्य मेनू देखने के लिए /start भेजें।",
       )
       bot.edit_message_caption(
           chat_id=call.message.chat.id,
@@ -180,7 +243,8 @@ def callback_handler(call):
       pending_profiles.pop(target_id)
       bot.send_message(
           target_id,
-          "❌ खेद है, आपकी सेल्फ़ी या जानकारी रिजेक्ट कर दी गई है। कृपया /start से दोबारा प्रयास करें।",
+          "❌ खेद है, आपकी सेल्फ़ी या जानकारी रिजेक्ट कर दी गई है। कृपया /start से"
+          " दोबारा प्रयास करें।",
       )
       bot.edit_message_caption(
           chat_id=call.message.chat.id,
@@ -210,7 +274,9 @@ def send_video_call_link(chat_id_1, chat_id_2):
   markup.add(btn_call)
 
   message_text = (
-      "🎉 **बधाई हो! आपका मैच बन गया है!**\n\nसुरक्षित और प्राइवेट वीडियो कॉल के लिए नीचे दिए गए बटन पर क्लिक करें। यह लिंक केवल आप दोनों के लिए है और कॉल कटने के बाद स्वतः बंद हो जाता है।"
+      "🎉 **बधाई हो! आपका मैच बन गया है!**\n\nसुरक्षित और प्राइवेट वीडियो कॉल के"
+      " लिए नीचे दिए गए बटन पर क्लिक करें। यह लिंक केवल आप दोनों के लिए है और"
+      " कॉल कटने के बाद स्वतः बंद हो जाता है।"
   )
 
   bot.send_message(chat_id_1, message_text, reply_markup=markup)
@@ -222,4 +288,3 @@ if __name__ == "__main__":
   keep_alive()
   print("बोट और वीडियो कॉल एपीआई सफलतापूर्वक शुरू हो गई है...")
   bot.infinity_polling()
-
