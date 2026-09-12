@@ -12,10 +12,11 @@ ADMIN_ID = 6262854630
 
 bot = telebot.TeleBot(TOKEN)
 
-# ----------------- Database (Dictionaries) -----------------
+# ----------------- Database (Dictionaries & Sets) -----------------
 user_data = {}
 pending_profiles = {}
 approved_profiles = {}
+blocked_users = set()  # Stores blocked user IDs
 
 # Dynamic settings (QR, support, points control, and VIP price)
 bot_settings = {
@@ -50,6 +51,11 @@ def keep_alive():
 @bot.message_handler(commands=["start"])
 def send_welcome(message):
     chat_id = message.chat.id
+
+    # Check if user is blocked
+    if chat_id in blocked_users:
+        bot.send_message(chat_id, "🚫 Your account has been blocked by the admin.")
+        return
 
     # 1. If user is admin
     if chat_id == ADMIN_ID:
@@ -108,6 +114,8 @@ def send_welcome(message):
 @bot.message_handler(content_types=["contact"])
 def handle_contact(message):
     chat_id = message.chat.id
+    if chat_id in blocked_users:
+        return
     phone_number = message.contact.phone_number
     user_data[chat_id] = {"phone": phone_number}
     bot.send_message(chat_id, "✅ Number verified!\n\nNow enter your full name:")
@@ -149,8 +157,8 @@ def get_selfie(message):
                 types.InlineKeyboardButton("✅ Approve", callback_data=f"approve_{chat_id}"),
                 types.InlineKeyboardButton("❌ Reject", callback_data=f"reject_{chat_id}")
             )
-            admin_text = f"🔔 **New Profile:**\nName: {user_data[chat_id]['name']}\nAge: {user_data[chat_id]['age']}\nCity: {user_data[chat_id]['district']}"
-            bot.send_photo(ADMIN_ID, photo_id, caption=admin_text, reply_markup=markup)
+            admin_text = f"🔔 **New Profile:**\nUser ID: `{chat_id}`\nName: {user_data[chat_id]['name']}\nAge: {user_data[chat_id]['age']}\nCity: {user_data[chat_id]['district']}"
+            bot.send_photo(ADMIN_ID, photo_id, caption=admin_text, reply_markup=markup, parse_mode="Markdown")
     else:
         bot.send_message(chat_id, "⚠️ Please upload a photo (selfie) only.")
         bot.register_next_step_handler(message, get_selfie)
@@ -163,17 +171,22 @@ def open_admin_panel(message):
     
     btn_pending = types.InlineKeyboardButton("📋 Pending Profiles", callback_data="admin_pending_list")
     btn_stats = types.InlineKeyboardButton("📊 Total Users", callback_data="admin_stats")
+    btn_block_user = types.InlineKeyboardButton("🚫 Block User", callback_data="admin_block_prompt")
+    btn_unblock_user = types.InlineKeyboardButton("✅ Unblock User", callback_data="admin_unblock_prompt")
+    btn_delete_user = types.InlineKeyboardButton("🗑️ Delete User", callback_data="admin_delete_prompt")
     btn_set_qr = types.InlineKeyboardButton("📲 Change UPI QR", callback_data="admin_set_qr")
     btn_set_support = types.InlineKeyboardButton("🎧 Change Support ID", callback_data="admin_set_support")
     btn_set_bonus = types.InlineKeyboardButton("🎁 Set Bonus Coins", callback_data="admin_set_bonus")
     btn_set_refer = types.InlineKeyboardButton("👥 Set Refer Coins", callback_data="admin_set_refer")
     btn_set_vip = types.InlineKeyboardButton("💰 Set VIP Price", callback_data="admin_set_vip_price")
     
-    markup.add(btn_pending, btn_stats, btn_set_qr, btn_set_support, btn_set_bonus, btn_set_refer, btn_set_vip)
+    markup.add(btn_pending, btn_stats, btn_block_user, btn_unblock_user, btn_delete_user, btn_set_qr, btn_set_support, btn_set_bonus, btn_set_refer, btn_set_vip)
     
     bot.send_message(
         message.chat.id, 
         f"🔐 **Admin Dashboard:**\n\n"
+        f"• Approved Users: `{len(approved_profiles)}`\n"
+        f"• Blocked Users: `{len(blocked_users)}`\n"
         f"• Current Daily Bonus: `{bot_settings['daily_bonus_coins']}` Coins\n"
         f"• Current Refer Coins: `{bot_settings['refer_coins']}` Coins\n"
         f"• Current VIP Price: `{bot_settings['vip_price']}`\n\n"
@@ -192,14 +205,54 @@ def callback_handler(call):
         if target_id in pending_profiles:
             approved_profiles[target_id] = pending_profiles.pop(target_id)
             bot.send_message(target_id, "🎉 Your profile has been approved. Send /start to view the main menu.")
-            bot.edit_message_caption(chat_id=chat_id, message_id=call.message.message_id, caption=call.message.caption + "\n\n✅ **Approved**")
+            try:
+                bot.edit_message_caption(chat_id=chat_id, message_id=call.message.message_id, caption=call.message.caption + "\n\n✅ **Approved**", parse_mode="Markdown")
+            except Exception:
+                pass
+        bot.answer_callback_query(call.id, "Profile approved successfully!")
 
     elif data.startswith("reject_"):
         target_id = int(data.split("_")[1])
         if target_id in pending_profiles:
             pending_profiles.pop(target_id)
             bot.send_message(target_id, "❌ Your information has been rejected. Please try again using /start.")
-            bot.edit_message_caption(chat_id=chat_id, message_id=call.message.message_id, caption=call.message.caption + "\n\n❌ **Rejected**")
+            try:
+                bot.edit_message_caption(chat_id=chat_id, message_id=call.message.message_id, caption=call.message.caption + "\n\n❌ **Rejected**", parse_mode="Markdown")
+            except Exception:
+                pass
+        bot.answer_callback_query(call.id, "Profile rejected.")
+
+    elif data.startswith("admin_block_"):
+        target_id = int(data.split("_")[2])
+        blocked_users.add(target_id)
+        if target_id in approved_profiles:
+            approved_profiles.pop(target_id)
+        bot.send_message(target_id, "🚫 Your account has been blocked by the admin due to policy violations or a report.")
+        bot.answer_callback_query(call.id, f"User {target_id} has been blocked successfully!", show_alert=True)
+        try:
+            bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
+        except Exception:
+            pass
+
+    elif data.startswith("admin_delete_"):
+        target_id = int(data.split("_")[2])
+        if target_id in approved_profiles:
+            approved_profiles.pop(target_id)
+        if target_id in pending_profiles:
+            pending_profiles.pop(target_id)
+        bot.send_message(target_id, "🗑️ Your profile has been deleted by the admin.")
+        bot.answer_callback_query(call.id, f"User profile {target_id} deleted successfully!", show_alert=True)
+        try:
+            bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
+        except Exception:
+            pass
+
+    elif data == "admin_dismiss_report":
+        bot.answer_callback_query(call.id, "Report dismissed.")
+        try:
+            bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
+        except Exception:
+            pass
 
     elif data == "admin_pending_list":
         if not pending_profiles:
@@ -208,7 +261,19 @@ def callback_handler(call):
             bot.answer_callback_query(call.id, f"Total pending profiles: {len(pending_profiles)}", show_alert=True)
 
     elif data == "admin_stats":
-        bot.answer_callback_query(call.id, f"Approved: {len(approved_profiles)} | Pending: {len(pending_profiles)}", show_alert=True)
+        bot.answer_callback_query(call.id, f"Approved: {len(approved_profiles)} | Pending: {len(pending_profiles)} | Blocked: {len(blocked_users)}", show_alert=True)
+
+    elif data == "admin_block_prompt":
+        msg = bot.send_message(chat_id, "Please enter the **Telegram User ID** you want to block:")
+        bot.register_next_step_handler(msg, process_block_user_id)
+
+    elif data == "admin_unblock_prompt":
+        msg = bot.send_message(chat_id, "Please enter the **Telegram User ID** you want to unblock:")
+        bot.register_next_step_handler(msg, process_unblock_user_id)
+
+    elif data == "admin_delete_prompt":
+        msg = bot.send_message(chat_id, "Please enter the **Telegram User ID** whose profile you want to delete:")
+        bot.register_next_step_handler(msg, process_delete_user_id)
 
     elif data == "admin_set_qr":
         msg = bot.send_message(chat_id, "Please send the new **UPI QR Code (Photo)**:")
@@ -229,6 +294,59 @@ def callback_handler(call):
     elif data == "admin_set_vip_price":
         msg = bot.send_message(chat_id, "Please enter the new VIP price (e.g., ₹199 or $5):")
         bot.register_next_step_handler(msg, save_vip_price)
+
+def process_block_user_id(message):
+    if message.text.isdigit():
+        uid = int(message.text)
+        blocked_users.add(uid)
+        if uid in approved_profiles:
+            approved_profiles.pop(uid)
+        bot.send_message(message.chat.id, f"✅ User ID `{uid}` has been blocked successfully.", parse_mode="Markdown")
+        try:
+            bot.send_message(uid, "🚫 Your account has been blocked by the admin.")
+        except Exception:
+            pass
+    else:
+        bot.send_message(message.chat.id, "⚠️ Please enter a valid numeric user ID.")
+
+def process_unblock_user_id(message):
+    if message.text.isdigit():
+        uid = int(message.text)
+        if uid in blocked_users:
+            blocked_users.remove(uid)
+            bot.send_message(message.chat.id, f"✅ User ID `{uid}` has been unblocked successfully.", parse_mode="Markdown")
+            try:
+                bot.send_message(uid, "🎉 Your account has been unblocked! Send /start to access the bot.")
+            except Exception:
+                pass
+        else:
+            bot.send_message(message.chat.id, "⚠️ This user ID is not in the blocked list.")
+    else:
+        bot.send_message(message.chat.id, "⚠️ Please enter a valid numeric user ID.")
+
+def process_delete_user_id(message):
+    if message.text.isdigit():
+        uid = int(message.text)
+        deleted = False
+        if uid in approved_profiles:
+            approved_profiles.pop(uid)
+            deleted = True
+        if uid in pending_profiles:
+            pending_profiles.pop(uid)
+            deleted = True
+        if uid in user_coins:
+            user_coins.pop(uid)
+            
+        if deleted:
+            bot.send_message(message.chat.id, f"✅ Profile data for User ID `{uid}` has been completely deleted.", parse_mode="Markdown")
+            try:
+                bot.send_message(uid, "🗑️ Your profile has been deleted by the admin.")
+            except Exception:
+                pass
+        else:
+            bot.send_message(message.chat.id, "⚠️ No profile found with this User ID.")
+    else:
+        bot.send_message(message.chat.id, "⚠️ Please enter a valid numeric user ID.")
 
 def save_upi_qr(message):
     if message.content_type == 'photo':
@@ -269,15 +387,21 @@ def save_vip_price(message):
 
 @bot.message_handler(func=lambda message: message.text == "🔍 Find Partner")
 def find_partner(message):
+    if message.chat.id in blocked_users:
+        return
     bot.send_message(message.chat.id, "🔍 Searching for the best matches across India for you... Please wait.")
 
 @bot.message_handler(func=lambda message: message.text == "💌 My Matches")
 def my_matches(message):
+    if message.chat.id in blocked_users:
+        return
     bot.send_message(message.chat.id, "💌 Here you will see matches who liked you. (Coming soon!)")
 
 @bot.message_handler(func=lambda message: message.text == "👤 My Profile")
 def my_profile(message):
     chat_id = message.chat.id
+    if chat_id in blocked_users:
+        return
     if chat_id in approved_profiles:
         p = approved_profiles[chat_id]
         coins = user_coins.get(chat_id, 0)
@@ -291,6 +415,8 @@ def my_profile(message):
 @bot.message_handler(func=lambda message: message.text == "🎁 Daily Bonus")
 def daily_bonus(message):
     chat_id = message.chat.id
+    if chat_id in blocked_users:
+        return
     if chat_id in approved_profiles:
         today = str(date.today())
         if last_bonus_date.get(chat_id) == today:
@@ -313,6 +439,8 @@ def daily_bonus(message):
 @bot.message_handler(func=lambda message: message.text == "💎 VIP Features")
 def vip_features(message):
     chat_id = message.chat.id
+    if chat_id in blocked_users:
+        return
     vip_price = bot_settings.get("vip_price", "₹199")
     
     vip_text = (
@@ -331,6 +459,8 @@ def vip_features(message):
 @bot.message_handler(func=lambda message: message.text == "👥 Refer & Earn")
 def invite_friends(message):
     chat_id = message.chat.id
+    if chat_id in blocked_users:
+        return
     if chat_id in approved_profiles:
         bot_info = bot.get_me()
         refer_link = f"https://t.me/{bot_info.username}?start={chat_id}"
@@ -349,31 +479,44 @@ def invite_friends(message):
 @bot.message_handler(func=lambda message: message.text == "🚨 Report Issue")
 def report_issue(message):
     chat_id = message.chat.id
+    if chat_id in blocked_users:
+        return
     if chat_id in approved_profiles:
-        msg = bot.send_message(chat_id, "🚨 Please describe the issue, bug, or user you want to report (include profile details/names if possible):")
+        msg = bot.send_message(chat_id, "🚨 Please describe the issue, bug, or provide the user ID/details you want to report:")
         bot.register_next_step_handler(msg, process_user_report)
     else:
         bot.send_message(chat_id, "⚠️ Please get your profile approved first.")
 
 def process_user_report(message):
     chat_id = message.chat.id
+    if chat_id in blocked_users:
+        return
     report_text = message.text
     user_info = approved_profiles.get(chat_id, {})
     name = user_info.get('name', 'Unknown')
     
     admin_report_msg = (
         f"🚨 **New User Report:**\n\n"
-        f"👤 **From User:** {name} (`{chat_id}`)\n"
-        f"📝 **Report Details:**\n{report_text}"
+        f"👤 **From User:** {name}\n"
+        f"🆔 **User ID:** `{chat_id}`\n"
+        f"📝 **Details:**\n{report_text}"
     )
     
     if ADMIN_ID:
-        bot.send_message(ADMIN_ID, admin_report_msg, parse_mode="Markdown")
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("🚫 Block User", callback_data=f"admin_block_{chat_id}"),
+            types.InlineKeyboardButton("🗑️ Delete Profile", callback_data=f"admin_delete_{chat_id}"),
+            types.InlineKeyboardButton("❌ Dismiss Report", callback_data="admin_dismiss_report")
+        )
+        bot.send_message(ADMIN_ID, admin_report_msg, reply_markup=markup, parse_mode="Markdown")
     
-    bot.send_message(chat_id, "✅ Your report has been successfully sent to the admin. Thank you for helping keep the community safe!")
+    bot.send_message(chat_id, "✅ Your report has been successfully sent to the admin. Thank you for keeping the community safe!")
 
 @bot.message_handler(func=lambda message: message.text == "🎧 Help / Support")
 def help_support(message):
+    if message.chat.id in blocked_users:
+        return
     support_id = bot_settings.get("support_contact", "@YourAdminUsername")
     bot.send_message(message.chat.id, f"🎧 Contact support for any issues, reports, or payment screenshots:\n\n👉 **{support_id}**", parse_mode="Markdown")
 
